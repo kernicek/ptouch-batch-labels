@@ -1,0 +1,9 @@
+text,subtext,icon
+M3x8,,hex_head
+M3x16,,socket_head
+M4x12,,button_head
+M4x16,,countersunk_head
+M3,t2.4,nut
+M4,t3.2,locknut
+M4,OD9 x t0.8,washer
+M3 spacers,8mm,
