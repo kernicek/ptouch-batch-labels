@@ -48,8 +48,8 @@ A lone `--text` (no `--subtext`) is centered and sized to fill the whole
 label height. With both, `--text` renders bold and larger, `--subtext`
 smaller underneath - matching the existing "M3x12mm / bolts" label style.
 
-Batch from CSV (columns: `text,subtext,icon,tape,length` - `subtext`/`icon`/`tape`/`length`
-optional, `tape`/`length` fall back to `--tape`/`--length`):
+Batch from CSV (columns: `text,subtext,icon,bit_size,ref_mm,thread,tape,length` - all but
+`text` optional, `thread`/`tape`/`length` fall back to `--thread`/`--tape`/`--length`):
 
 ```
 python3 -m ptouch_batch_labels.cli batch example_gridfinity_hardware.csv --tape 12 --length 35 --outdir labels_out
@@ -71,31 +71,47 @@ in between. Add `--final-cut` when you actually want to pull the tape free.
 Bolt heads are drawn in **side profile** (head shape + a short threaded-shaft
 stub), not from above - from above a socket/button/countersunk head is just
 "circle with a hex hole", so the side silhouette is what actually tells them
-apart. The three hex-socket types also get a separate small hexagon icon
-next to the head for the hex key ("bit") they need - drawn as its own shape
-rather than crammed inside the head outline, so it stays legible at 12mm-tape
-sizes:
+apart. All heads share one junction line with the shaft (see `JUNCTION_FRAC`),
+so they line up label to label regardless of head shape.
 
-- `hex_head` - wrench-driven hex head (ISO 4017), short hex prism. No bit
-  icon - the head's own hex shape is the drive, not an internal recess.
-- `socket_head` - hex socket cap screw (DIN 912), flat-topped cylinder + hex bit
-- `button_head` - hex socket button head (ISO 7380), low dome + hex bit
-- `countersunk_head` - hex socket countersunk/flat head (ISO 10642), flush cone + hex bit
+- `hex_head` - wrench-driven hex head (ISO 4017), short block + 2 facet lines
+- `socket_head` - hex socket cap screw (DIN 912), flat-topped cylinder
+- `button_head` - hex socket button head (ISO 7380), low dome
+- `countersunk_head` - hex socket countersunk/flat head (ISO 10642), flush cone
+- `pan_head` - slotted/Phillips pan head, shallow rounded-top cylinder
+- `carriage_head` - round head + square neck (chamfer marks hint the square
+  cross-section), no bit - held by the neck while a nut is tightened
+- `flange_head` - hex head with an integrated washer-like flange at the base
+
+Every head above defaults to a **bolt** shaft: a flush shank with the thread
+marked as ticks on its surface, since a bolt is meant to be torqued against a
+nut rather than into the material itself. Pass `--thread screw` to draw a
+**screw** shaft instead - a thinner core with the actual thread crests
+poking out past it - for a fastener that threads directly into a tapped hole.
+
+Heads with a drive recess (see `BIT_FOR_HEAD`) get a separate small bit-shape
+icon flush against the *right* edge of the label, past the text - not crammed
+inside the head outline, so it stays legible at 12mm-tape sizes:
+`socket_head`/`button_head`/`countersunk_head` get a hex-key outline,
+`pan_head` gets a Phillips cross. `hex_head`/`flange_head`/`carriage_head`
+get none - wrench-driven or (for carriage bolts) not driven by the head at
+all. Pass `--bit-size "3"` (a hex key size) or `--bit-size "PH2"` (a Phillips
+size) to add a small label under that bit icon.
 
 Nuts and washers stay top-down, where their shape is the distinctive part:
 `nut`, `locknut` (nyloc - filled insert ring round the hole, vs. `nut`'s open
 hole), `washer`. Washer OD/thickness aren't encoded in the icon (too small to
 read) - put them in `--subtext` instead, e.g. `--subtext "OD9 x t0.8"`.
 
-See `ptouch_batch_labels/icons.py` - adding a new one is a small function using
-`PIL.ImageDraw`, registered in the `ICONS` dict.
+See `ptouch_batch_labels/icons.py` - adding a new head is a small function
+using `PIL.ImageDraw`, registered in the `ICONS` dict (and `BIT_FOR_HEAD` if
+it needs a bit icon).
 
-## Ideas for later (not implemented)
+## Measurement reference line
 
-- **Printed length/size reference line.** For a bolt, a thin line at the
-  bottom of the label exactly as long as the bolt itself, so you can check a
-  loose bolt against the label without a caliper. Only works up to roughly
-  30mm (label length limit before it'd need a second row or a much longer
-  tape). Same idea could apply to other dimensions already in `--subtext` -
-  e.g. a nut's thickness, a washer's OD - as a small reference mark/line
-  sized to that measurement rather than just stating the number.
+`--ref-mm 20` reserves a strip along the bottom of the label for a thin line,
+with caliper-style end-ticks, exactly 20mm long - check a loose bolt's length,
+a nut's thickness, a washer's OD, etc. against the printed label directly,
+no caliper needed. Only fits up to roughly 30mm on a typical label (raises a
+clear error if the line would be longer than the label itself - use a longer
+`--length` instead of guessing).

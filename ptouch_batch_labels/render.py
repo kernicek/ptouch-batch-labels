@@ -3,7 +3,7 @@ palette mode, exactly 2 colors, height <= the tape's usable print px."""
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .icons import NEEDS_BIT, render_bit_icon, render_icon
+from .icons import BIT_FOR_HEAD, render_bit_icon, render_icon
 from .tape import mm_to_px, tape_height_px
 
 BOLD_FONT = "/usr/share/fonts/liberation-sans-fonts/LiberationSans-Bold.ttf"
@@ -33,11 +33,42 @@ def _fit_font(draw, lines, font_path, max_width, max_line_height):
     return ImageFont.truetype(font_path, _fit_font_size(draw, lines, font_path, max_width, max_line_height))
 
 
-def _layout(icon, width, height):
-    """Where everything goes: bolt icon on the left, hex-key bit icon (if
-    this head type needs one) flush against the right edge, text in
-    whatever's left between them. Shared by render_label and by
-    fit_uniform_font_sizes so both agree on the available text width.
+def _bit_block(bit_kind, bit_size, avail_height):
+    """Bit icon, optionally with its size (e.g. "3" for a 3mm hex key, "PH2"
+    for a Phillips #2) as a small label stacked underneath - one combined
+    image, since as far as _layout is concerned this is just "the thing
+    that goes in the bit zone", the same as a bare bit icon would be."""
+    icon_h = round(avail_height * (0.5 if bit_size else 0.4))
+    bit_icon = render_bit_icon(bit_kind, icon_h)
+    if not bit_size:
+        return bit_icon
+    gap = max(1, round(avail_height * 0.06))
+    label_budget_h = avail_height - icon_h - gap
+    if label_budget_h < 4:
+        return bit_icon
+    label_font_size = _fit_font_size(
+        _dummy_draw, [bit_size], REGULAR_FONT, avail_height * 3, round(label_budget_h * 0.6)
+    )
+    label_font = ImageFont.truetype(REGULAR_FONT, label_font_size)
+    bbox = _dummy_draw.textbbox((0, 0), bit_size, font=label_font)
+    label_w, label_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    block_w = max(bit_icon.width, label_w)
+    block = Image.new("L", (block_w, icon_h + gap + label_h), 255)
+    block.paste(bit_icon, ((block_w - bit_icon.width) // 2, 0))
+    bd = ImageDraw.Draw(block)
+    bd.text(((block_w - label_w) // 2 - bbox[0], icon_h + gap - bbox[1]), bit_size, fill=0, font=label_font)
+    return block
+
+
+REF_LINE_ZONE_FRAC = 0.16  # fraction of label height reserved for the ref line + its end-ticks
+
+
+def _layout(icon, width, height, bit_size=None, ref_mm=None, thread="bolt"):
+    """Where everything goes: bolt icon on the left, drive-bit icon (if this
+    head type needs one - see BIT_FOR_HEAD) flush against the right edge,
+    text in whatever's left between them, and (if ref_mm is set) a thin
+    measurement line reserved along the bottom. Shared by render_label and
+    by fit_uniform_font_sizes so both agree on the available text width.
 
     The icon always gets a fixed SQUARE zone (avail_height wide), with the
     actual icon image - narrower for bolts (BOLT_ASPECT < 1), full-width for
@@ -48,28 +79,56 @@ def _layout(icon, width, height):
     text_x0 = MARGIN_PX
     right_edge = width - MARGIN_PX
     avail_height = height - 2 * MARGIN_PX
+    ref_zone_h = 0
+    if ref_mm:
+        ref_zone_h = max(6, round(height * REF_LINE_ZONE_FRAC))
+        avail_height -= ref_zone_h
     icon_img = icon_x = bit_img = bit_x = None
     if icon:
-        icon_img = render_icon(icon, avail_height)
+        icon_img = render_icon(icon, avail_height, screw=(thread == "screw"))
         icon_zone_w = avail_height  # square
         icon_x = MARGIN_PX + (icon_zone_w - icon_img.width) // 2
         text_x0 = MARGIN_PX + icon_zone_w + MARGIN_PX
-        if icon in NEEDS_BIT:
-            bit_img = render_bit_icon(round(avail_height * 0.4))
+        bit_kind = BIT_FOR_HEAD.get(icon)
+        if bit_kind:
+            bit_img = _bit_block(bit_kind, bit_size, avail_height)
             bit_x = width - MARGIN_PX - bit_img.width
             right_edge = bit_x - MARGIN_PX
     max_width = right_edge - text_x0
-    return text_x0, max_width, avail_height, icon_img, icon_x, bit_img, bit_x
+    return text_x0, max_width, avail_height, icon_img, icon_x, bit_img, bit_x, ref_zone_h
 
 
-def label_geometry(icon, tape_mm, length_mm):
+def label_geometry(icon, tape_mm, length_mm, bit_size=None, ref_mm=None, thread="bolt"):
     """Pixel geometry for a label, without drawing any text - shared by
     render_label and by batch callers that need to fit one font size across
     many labels with different icons/widths."""
     height = tape_height_px(tape_mm)
     width = mm_to_px(length_mm)
-    text_x0, max_width, avail_height, _, _, _, _ = _layout(icon, width, height)
+    text_x0, max_width, avail_height, _, _, _, _, _ = _layout(icon, width, height, bit_size, ref_mm, thread)
     return width, height, text_x0, max_width, avail_height
+
+
+def _draw_ref_line(draw, height, ref_zone_h, ref_mm, text_x0, max_width):
+    """A thin measurement line, exactly ref_mm long, with small end-ticks
+    (like a caliper bracket) so the exact start/end read clearly rather than
+    a bare line whose endpoints are ambiguous once printed. Centered under
+    the text column (text_x0/max_width from _layout), not the full label
+    width, so it lines up with the text above it rather than the icon/bit
+    zones on either side."""
+    line_len = mm_to_px(ref_mm)
+    if line_len > max_width:
+        raise ValueError(
+            f"reference line for {ref_mm}mm ({line_len}px) is longer than "
+            f"the text column ({max_width}px available) - only works up to "
+            f"roughly 30mm on a typical label; use a longer --length"
+        )
+    tick_h = max(2, round(ref_zone_h * 0.6))
+    y = height - MARGIN_PX - 1
+    x0 = text_x0 + (max_width - line_len) / 2
+    x1 = x0 + line_len
+    draw.line([x0, y, x1, y], fill=0, width=1)
+    draw.line([x0, y - tick_h, x0, y], fill=0, width=1)
+    draw.line([x1, y - tick_h, x1, y], fill=0, width=1)
 
 
 def _text_budgets(avail_height):
@@ -95,7 +154,9 @@ def fit_uniform_font_sizes(rows, font_path=None, subtext_font_path=None):
         text, subtext = r.get("text"), r.get("subtext")
         if not text:
             continue
-        _, _, _, max_width, avail_height = label_geometry(r.get("icon"), r["tape"], r["length"])
+        _, _, _, max_width, avail_height = label_geometry(
+            r.get("icon"), r["tape"], r["length"], r.get("bit_size"), r.get("ref_mm"), r.get("thread") or "bolt"
+        )
         if max_width <= 0:
             raise ValueError("icon leaves no room for text at this label length")
         if subtext:
@@ -140,6 +201,9 @@ def render_label(
     text=None,
     subtext=None,
     icon=None,
+    bit_size=None,
+    ref_mm=None,
+    thread="bolt",
     tape_mm=12,
     length_mm=35,
     font_path=BOLD_FONT,
@@ -151,7 +215,16 @@ def render_label(
 
     A single `text` line is centered and sized to fill the full label height.
     `text` + `subtext` renders as a bold main line over a smaller detail line
-    (matching e.g. "M3x12mm" / "bolts" on existing labels).
+    (matching e.g. "M3x12mm" / "bolts" on existing labels). `bit_size` (e.g.
+    "3" for a 3mm hex key, "PH2" for a Phillips #2) is a small label under
+    the drive-bit icon, for heads that have one (see BIT_FOR_HEAD) - ignored
+    otherwise. `thread` ("bolt", the default, or "screw") picks the shaft
+    style: a bolt's flush shank (pairs with a nut) vs a screw's thinner core
+    with the thread crests poking out (threads directly into the material).
+    `ref_mm`, if given, reserves a strip along the bottom for a
+    measurement line exactly that many mm long (a bolt's length, a nut's
+    thickness, ...) so a real part can be checked against it directly -
+    only fits up to roughly 30mm before it'd need a longer label.
 
     `font_size`/`subtext_font_size` pin the text to an explicit point size
     instead of auto-fitting to this label's own width - use
@@ -164,11 +237,15 @@ def render_label(
     canvas = Image.new("L", (width, height), 255)
     draw = ImageDraw.Draw(canvas)
 
-    text_x0, max_width, avail_height, icon_img, icon_x, bit_img, bit_x = _layout(icon, width, height)
+    text_x0, max_width, avail_height, icon_img, icon_x, bit_img, bit_x, ref_zone_h = _layout(
+        icon, width, height, bit_size, ref_mm, thread
+    )
     if icon_img:
         canvas.paste(icon_img, (icon_x, MARGIN_PX))
     if bit_img:
-        canvas.paste(bit_img, (bit_x, (height - bit_img.height) // 2))
+        canvas.paste(bit_img, (bit_x, MARGIN_PX + (avail_height - bit_img.height) // 2))
+    if ref_mm:
+        _draw_ref_line(draw, height, ref_zone_h, ref_mm, text_x0, max_width)
 
     if text and max_width <= 0:
         raise ValueError("icon leaves no room for text at this label length")

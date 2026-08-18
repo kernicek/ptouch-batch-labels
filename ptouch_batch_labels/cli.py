@@ -40,6 +40,9 @@ def cmd_single(args):
         text=args.text,
         subtext=args.subtext,
         icon=args.icon,
+        bit_size=args.bit_size,
+        ref_mm=args.ref_mm,
+        thread=args.thread,
         tape_mm=args.tape,
         length_mm=args.length,
     )
@@ -63,6 +66,9 @@ def cmd_batch(args):
                 "text": row.get("text") or "",
                 "subtext": row.get("subtext") or None,
                 "icon": row.get("icon") or None,
+                "bit_size": row.get("bit_size") or None,
+                "ref_mm": float(row["ref_mm"]) if row.get("ref_mm") else None,
+                "thread": row.get("thread") or args.thread,
                 "tape": int(row["tape"]) if row.get("tape") else args.tape,
                 "length": float(row["length"]) if row.get("length") else args.length,
             }
@@ -78,6 +84,9 @@ def cmd_batch(args):
             text=row["text"],
             subtext=row["subtext"],
             icon=row["icon"],
+            bit_size=row["bit_size"],
+            ref_mm=row["ref_mm"],
+            thread=row["thread"],
             tape_mm=row["tape"],
             length_mm=row["length"],
             font_size=main_size,
@@ -99,6 +108,12 @@ def main():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--tape", type=int, default=12, help="tape width in mm (default: 12)")
     common.add_argument("--length", type=float, default=35, help="label length in mm (default: 35)")
+    common.add_argument(
+        "--thread",
+        choices=["bolt", "screw"],
+        default="bolt",
+        help="shaft style: 'bolt' (default) - flush shank meant to pair with a nut; 'screw' - thinner core with the thread crests poking out, threads directly into the material",
+    )
     common.add_argument("--print", action="store_true", help="pipe each label straight to ptouch-print --image")
     common.add_argument("--cutmark", action="store_true", help="add --cutmark when printing")
     common.add_argument(
@@ -111,11 +126,13 @@ def main():
     one.add_argument("--text", help="main label text (bold); use \\n for multiple lines if no --subtext")
     one.add_argument("--subtext", help="smaller detail line under --text, e.g. 'bolts' or 'OD9 x t0.8'")
     one.add_argument("--icon", choices=sorted(ICONS), help="icon to draw on the left")
+    one.add_argument("--bit-size", help="drive-bit size label under the bit icon, e.g. '3' or 'PH2' (only shown for heads with a bit - see BIT_FOR_HEAD)")
+    one.add_argument("--ref-mm", type=float, help="reserve a bottom strip for a measurement line exactly this many mm long, to check a real part against (works up to roughly 30mm)")
     one.add_argument("--out", help="output PNG path")
     one.set_defaults(func=cmd_single)
 
     batch = sub.add_parser("batch", parents=[common], help="render many labels from a CSV")
-    batch.add_argument("csv", help="CSV with columns: text,subtext,icon,tape,length (subtext/icon/tape/length optional, tape/length override --tape/--length per row)")
+    batch.add_argument("csv", help="CSV with columns: text,subtext,icon,bit_size,ref_mm,thread,tape,length (all but text optional; thread/tape/length override --thread/--tape/--length per row)")
     batch.add_argument("--outdir", default="labels_out", help="directory to write PNGs into (default: labels_out)")
     batch.set_defaults(func=cmd_batch)
 
